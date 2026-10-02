@@ -131,3 +131,76 @@ test('API status page shows local retry after first-load API failure', async ({ 
   await expect.poll(() => requestCount).toBeGreaterThan(requestsAfterFailure)
   expect(user.page.url()).toBe(urlAfterFailure)
 })
+
+/**
+ * Full two-player game against the real worker, real Wikipedia, and the real
+ * question writer (one generation per run — keep this the only spec that
+ * creates a game). Covers: hosting, invite-link join, presence in the lobby,
+ * answer secrecy before reveal, the "everyone answered" early reveal, the
+ * timer-driven reveal, scoring, and the final standings on both screens.
+ */
+test('two players play a full game', async ({ users }) => {
+  test.setTimeout(180_000)
+  const [host, guest] = await users(2)
+
+  // Host writes a short, fast quiz.
+  await host.page.goto('/home')
+  await host.page.getByLabel('Topic').fill('Octopus')
+  await host.page.getByRole('combobox').first().click()
+  await host.page.getByRole('option', { name: '5 questions' }).click()
+  await host.page.getByRole('combobox').nth(1).click()
+  await host.page.getByRole('option', { name: '10 seconds' }).click()
+  await host.page.getByTestId('create-game').click()
+  await host.page.waitForURL(/\/play\/[A-Z]{4}$/, { timeout: 90_000 })
+  const code = (await host.page.getByTestId('room-code').textContent())?.trim()
+  expect(code).toMatch(/^[A-Z]{4}$/)
+
+  // Guest follows the invite link and is seated automatically.
+  await guest.page.goto(`/play/${code}`)
+  for (const u of [host, guest]) {
+    await expect(u.page.getByTestId('lobby-players').locator('li')).toHaveCount(2, { timeout: 20_000 })
+  }
+
+  await host.page.getByTestId('start-game').click()
+
+  const room = (u: typeof host) => u.page.getByTestId('game-room')
+  let questionCount = 0
+  for (let round = 0; round < 12; round++) {
+    for (const u of [host, guest]) {
+      await expect(u.page.getByTestId('question-phase')).toBeVisible({ timeout: 20_000 })
+      // Secrecy: nothing on the page marks a correct answer before the reveal.
+      await expect(u.page.locator('[data-correct]')).toHaveCount(0)
+    }
+    questionCount++
+
+    await host.page.getByTestId('choice-0').click()
+    if (round === 1) {
+      // Guest sits this one out — the round must close on the timer alone.
+      await expect(guest.page.getByTestId('reveal-phase')).toBeVisible({ timeout: 20_000 })
+      await expect(guest.page.getByTestId('round-result')).toContainText('No answer in time')
+    } else {
+      await guest.page.getByTestId('choice-1').click()
+      // Both answered → the round closes early, well before the 10s timer.
+      await expect(guest.page.getByTestId('reveal-phase')).toBeVisible({ timeout: 8_000 })
+    }
+    await expect(host.page.getByTestId('reveal-phase')).toBeVisible({ timeout: 10_000 })
+    for (const u of [host, guest]) {
+      await expect(u.page.locator('[data-correct]')).toHaveCount(1)
+      await expect(u.page.getByTestId('footnote')).toContainText('Wikipedia')
+    }
+
+    await host.page.getByTestId('next-question').click()
+    const status = await Promise.race([
+      expect(room(host)).toHaveAttribute('data-status', 'finished', { timeout: 10_000 }).then(() => 'finished'),
+      expect(room(host)).toHaveAttribute('data-status', 'question', { timeout: 10_000 }).then(() => 'question'),
+    ])
+    if (status === 'finished') break
+  }
+
+  expect(questionCount).toBeGreaterThanOrEqual(3)
+  for (const u of [host, guest]) {
+    await expect(u.page.getByTestId('finished-phase')).toBeVisible({ timeout: 10_000 })
+    await expect(u.page.getByTestId('winner')).toBeVisible()
+    await expect(u.page.getByTestId('scoreboard').locator('li')).toHaveCount(2)
+  }
+})

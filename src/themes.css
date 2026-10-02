@@ -16,31 +16,70 @@
  *   4. Switch to it via `data-theme` on <html> in index.html.
  */
 
-/* Paper — light example theme; shows the full token contract incl.
- * `color-scheme: light`. Replace or delete it once the app has its own. */
-[data-theme="paper"] {
+/* Footnote — warm newsprint paper, ink-black type, vermilion for action.
+ * Reads like an annotated page, which is the product's idea: every answer
+ * carries its citation. The four answer colours are game tokens, not chrome. */
+[data-theme="footnote"] {
   color-scheme: light;
-  --color-background: #ffffff;
-  --color-foreground: #0a0a0a;
-  --color-card: #fafafa;
-  --color-card-foreground: #0a0a0a;
-  --color-popover: #ffffff;
-  --color-popover-foreground: #0a0a0a;
-  --color-primary: #171717;
-  --color-primary-foreground: #ffffff;
-  --color-secondary: #f5f5f5;
-  --color-secondary-foreground: #0a0a0a;
-  --color-muted: #f5f5f5;
-  --color-muted-foreground: #525252;
-  --color-accent: #e5e5e5;
-  --color-accent-foreground: #0a0a0a;
-  --color-destructive: #dc2626;
+  --color-background: #f6f1e7;
+  --color-foreground: #1b1a17;
+  --color-card: #fffcf5;
+  --color-card-foreground: #1b1a17;
+  --color-popover: #fffcf5;
+  --color-popover-foreground: #1b1a17;
+  --color-primary: #d9412b;
+  --color-primary-foreground: #fffcf5;
+  --color-secondary: #ebe3d3;
+  --color-secondary-foreground: #1b1a17;
+  --color-muted: #ece5d6;
+  --color-muted-foreground: #6b6458;
+  --color-accent: #e6dcc8;
+  --color-accent-foreground: #1b1a17;
+  --color-destructive: #b42318;
   --color-destructive-foreground: #ffffff;
-  --color-border: #e5e5e5;
-  --color-input: #e5e5e5;
-  --color-ring: #171717;
-  --shadow-card: 0 1px 2px 0 rgba(0, 0, 0, 0.016);
-  --shadow-card-hover: 0 2px 8px 0 rgba(0, 0, 0, 0.032);
-  --color-shell: #fafafa;
-  --color-shell-panel: #ffffff;
+  --color-border: #d9cfbb;
+  --color-input: #cfc4ae;
+  --color-ring: #d9412b;
+  --radius: 0.375rem;
+  --shadow-card: 0 1px 0 0 rgba(27, 26, 23, 0.08);
+  --shadow-card-hover: 0 3px 0 0 rgba(27, 26, 23, 0.12);
+  --color-shell: #efe8da;
+  --color-shell-panel: #fffcf5;
+
+  --color-choice-0: #d9412b; /* vermilion */
+  --color-choice-1: #2d5bd7; /* cobalt */
+  --color-choice-2: #c98a04; /* ochre */
+  --color-choice-3: #1f7a5a; /* bottle green */
+}
+
+[data-theme="footnote"] body {
+  font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+  font-size: 15px;
+}
+
+.font-display {
+  font-family: 'Fraunces', ui-serif, Georgia, serif;
+  font-optical-sizing: auto;
+  letter-spacing: -0.01em;
+}
+
+.font-code {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* The countdown bar drains via a CSS transition so it stays smooth even when
+ * React renders slowly; JS only sets the start state and duration. */
+@keyframes drain {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+
+@keyframes pop-in {
+  0% { transform: scale(0.96); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.animate-pop-in { animation: pop-in 220ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pop-in { animation: none; }
 }

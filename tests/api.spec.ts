@@ -15,4 +15,11 @@ test.describe('API tests', () => {
     await page.waitForSelector('[data-testid="app-navigation"]', { timeout: 15000 })
     // If the app loaded and connected, the WS endpoint works
   })
+
+  test('trivia actions require sign-in', async ({ request }) => {
+    for (const name of ['createGame', 'joinGame', 'submitAnswer', 'revealQuestion']) {
+      const res = await request.post(`/api/actions/${name}`, { data: {} })
+      expect(res.status(), name).toBe(401)
+    }
+  })
 })

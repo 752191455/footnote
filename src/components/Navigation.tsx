@@ -71,8 +71,9 @@ export default function Navigation() {
     <>
       <nav data-testid="app-navigation" className="border-b border-border bg-background">
         <div className="mx-auto flex h-12 max-w-7xl items-center gap-4 px-4">
-          <Link to="/home" className="text-sm font-semibold text-foreground">
+          <Link to="/home" className="font-display text-lg font-black text-foreground">
             {APP_NAME}
+            <span className="text-primary">.</span>
           </Link>
 
           <div className="hidden items-center md:flex">{visibleNav.map(navLink)}</div>

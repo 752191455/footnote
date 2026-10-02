@@ -63,6 +63,21 @@ test.describe('Smoke tests', () => {
     await expect(page.getByTestId('nav-user-name')).toHaveCount(0)
   })
 
+  test('home shows the host and join panel', async ({ page }) => {
+    await page.goto('/home')
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('Any topic becomes a quiz night')
+    await expect(page.getByText('placeholder page')).toHaveCount(0)
+    await expect(page.getByTestId('host-form')).toBeVisible()
+    await page.getByRole('tab', { name: 'Join with code' }).click()
+    await expect(page.getByTestId('join-form')).toBeVisible()
+    await expect(page).toHaveTitle(/Footnote/)
+  })
+
+  test('play page invites signed-out visitors to sign in', async ({ page }) => {
+    await page.goto('/play/ABCD')
+    await expect(page.getByText("You're invited to game ABCD")).toBeVisible({ timeout: 15000 })
+  })
+
   test('unknown route shows 404', async ({ page }) => {
     await page.goto('/nonexistent-page-xyz')
     await waitForApp(page)
