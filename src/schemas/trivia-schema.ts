@@ -17,7 +17,7 @@ import type { CollectionSchema } from 'deepspace/schema'
 const SERVER_ONLY = { read: false, create: false, update: false, delete: false } as const
 const READ_ONLY = { read: true, create: false, update: false, delete: false } as const
 
-export const GAME_STATUSES = ['lobby', 'question', 'reveal', 'finished'] as const
+export const GAME_STATUSES = ['generating', 'failed', 'lobby', 'question', 'reveal', 'finished'] as const
 export type GameStatus = (typeof GAME_STATUSES)[number]
 
 export const gamesSchema: CollectionSchema = {
@@ -35,9 +35,44 @@ export const gamesSchema: CollectionSchema = {
     { name: 'revealedAt', storage: 'number', interpretation: 'plain' },
     { name: 'secondsPerQuestion', storage: 'number', interpretation: 'plain' },
     { name: 'questionCount', storage: 'number', interpretation: 'plain' },
-    /** Wikipedia articles the questions were grounded in: [{ title, url }]. */
+    /** Wikipedia articles: [{ title, url, imageUrl? }]. Images are lead photos, not generated. */
     { name: 'sources', storage: 'text', interpretation: { kind: 'json' } },
+    /** AppJobRoom job that writes the questions; clients watch it with useJobs. */
+    { name: 'jobId', storage: 'text', interpretation: 'plain' },
+    /** Why generation failed, shown to the room when status is 'failed'. */
+    { name: 'generationError', storage: 'text', interpretation: 'plain' },
+    /** Optional host-uploaded cover (R2 app scope) shown in the lobby. */
+    { name: 'coverFileKey', storage: 'text', interpretation: 'plain' },
+    { name: 'coverUrl', storage: 'text', interpretation: 'plain' },
+    /** Optional host-uploaded PDF/image attachment for the room. */
+    { name: 'attachmentFileKey', storage: 'text', interpretation: 'plain' },
+    { name: 'attachmentName', storage: 'text', interpretation: 'plain' },
+    { name: 'attachmentMime', storage: 'text', interpretation: 'plain' },
+    /** Exa enrichment snippets used while writing questions: [{ title, url }]. */
+    { name: 'enrichment', storage: 'text', interpretation: { kind: 'json' } },
+    /** JobRoom id for the post-game summary. */
+    { name: 'summaryJobId', storage: 'text', interpretation: 'plain' },
   ],
+  permissions: { '*': SERVER_ONLY, viewer: READ_ONLY, member: READ_ONLY, admin: READ_ONLY },
+}
+
+/**
+ * Post-game recap written by the summarize-game JobRoom job. One row per game.
+ * Maps to the "summaries" pattern in DeepSpace board-style apps.
+ */
+export const summariesSchema: CollectionSchema = {
+  name: 'summaries',
+  columns: [
+    { name: 'gameId', storage: 'text', interpretation: 'plain', required: true },
+    { name: 'topic', storage: 'text', interpretation: 'plain' },
+    { name: 'headline', storage: 'text', interpretation: 'plain' },
+    { name: 'body', storage: 'text', interpretation: 'plain' },
+    /** Short callouts: [{ label, text }]. */
+    { name: 'highlights', storage: 'text', interpretation: { kind: 'json' } },
+    { name: 'status', storage: 'text', interpretation: { kind: 'select', options: ['pending', 'ready', 'failed'] } },
+    { name: 'jobId', storage: 'text', interpretation: 'plain' },
+  ],
+  uniqueOn: ['gameId'],
   permissions: { '*': SERVER_ONLY, viewer: READ_ONLY, member: READ_ONLY, admin: READ_ONLY },
 }
 
@@ -50,6 +85,8 @@ export const questionsSchema: CollectionSchema = {
     { name: 'choices', storage: 'text', interpretation: { kind: 'json' } },
     { name: 'sourceTitle', storage: 'text', interpretation: 'plain' },
     { name: 'sourceUrl', storage: 'text', interpretation: 'plain' },
+    /** Wikipedia lead image; shown on reveal only so it cannot hint the answer. */
+    { name: 'sourceImageUrl', storage: 'text', interpretation: 'plain' },
     // The next three stay null until the reveal action fills them in.
     { name: 'correctIndex', storage: 'number', interpretation: 'plain' },
     { name: 'explanation', storage: 'text', interpretation: 'plain' },
@@ -139,4 +176,5 @@ export const triviaSchemas = [
   playersSchema,
   submissionsSchema,
   revealLocksSchema,
+  summariesSchema,
 ]

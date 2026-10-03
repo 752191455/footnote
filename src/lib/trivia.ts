@@ -66,6 +66,58 @@ export function scoreAnswer(opts: {
   return SCORING.base + speed + streakBonus
 }
 
+export interface ScoredSubmission {
+  choice: number
+  elapsedMs?: number
+  /** Set on submissions whose round has already been revealed. */
+  correct?: boolean | null
+  points?: number | null
+}
+
+export interface PlayerTally {
+  score: number
+  streak: number
+  correctCount: number
+  /** Points for round `upToIndex`. */
+  lastPoints: number
+  /** Outcome for round `upToIndex` (written back onto that submission). */
+  current: { correct: boolean; points: number }
+}
+
+/**
+ * Recompute a player's totals from their submissions for rounds 0..upToIndex,
+ * scoring round `upToIndex` against `correctIndex`. Earlier rounds use the
+ * correctness and points already stored at their own reveal.
+ *
+ * Because totals are rebuilt from the submissions rather than added to the
+ * previous score, running a reveal twice gives the same result. That is what
+ * lets a crashed or racing reveal simply run again without double-counting.
+ */
+export function tallyPlayer(
+  subsByIndex: Map<number, ScoredSubmission>,
+  upToIndex: number,
+  correctIndex: number,
+  durationMs: number,
+): PlayerTally {
+  let score = 0
+  let streak = 0
+  let correctCount = 0
+  let current = { correct: false, points: 0 }
+  for (let i = 0; i <= upToIndex; i++) {
+    const sub = subsByIndex.get(i)
+    const isCurrent = i === upToIndex
+    const correct = isCurrent ? !!sub && sub.choice === correctIndex : sub?.correct === true
+    streak = correct ? streak + 1 : 0
+    const points = isCurrent
+      ? scoreAnswer({ correct, elapsedMs: sub?.elapsedMs ?? durationMs, durationMs, streak })
+      : (sub?.points ?? 0)
+    score += points
+    if (correct) correctCount++
+    if (isCurrent) current = { correct, points }
+  }
+  return { score, streak, correctCount, lastPoints: current.points, current }
+}
+
 // ── Wikipedia text extraction ─────────────────────────────────────────────
 
 const ENTITIES: Record<string, string> = {
@@ -108,6 +160,41 @@ export function articleHtmlToText(html: string, maxChars = 6000): string {
 
 export function wikipediaUrl(title: string): string {
   return `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`
+}
+
+/**
+ * Wikipedia / Commons image URLs only. Search hits often return a string;
+ * page summaries nest `{ source }` on thumbnail / originalimage.
+ */
+export function wikiImageUrl(raw: unknown): string | undefined {
+  if (typeof raw === 'string') {
+    const text = raw.trim()
+    const abs = text.startsWith('//') ? `https:${text}` : text
+    if (!/^https:\/\//i.test(abs) || /\s/.test(abs)) return undefined
+    try {
+      const host = new URL(abs).hostname
+      if (!/(^|\.)wikipedia\.org$|(^|\.)wikimedia\.org$|(^|\.)wikimediafoundation\.org$/.test(host)) {
+        return undefined
+      }
+    } catch {
+      return undefined
+    }
+    return abs
+  }
+  if (raw && typeof raw === 'object') {
+    const row = raw as Record<string, unknown>
+    return wikiImageUrl(row.source ?? row.url ?? row.thumbnail)
+  }
+  return undefined
+}
+
+/** Lead image from wikipedia/get-page-summary (flat or wrapped in pageData). */
+export function imageFromWikiSummary(data: unknown): string | undefined {
+  if (!data || typeof data !== 'object') return undefined
+  const row = data as Record<string, unknown>
+  const page =
+    row.pageData && typeof row.pageData === 'object' ? (row.pageData as Record<string, unknown>) : row
+  return wikiImageUrl(page.originalimage) ?? wikiImageUrl(page.thumbnail) ?? wikiImageUrl(row.thumbnail)
 }
 
 // ── Generated question validation ─────────────────────────────────────────

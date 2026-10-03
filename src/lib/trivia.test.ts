@@ -7,7 +7,11 @@ import {
   normalizeRoomCode,
   rankPlayers,
   scoreAnswer,
+  tallyPlayer,
   validateGeneratedQuestions,
+  wikiImageUrl,
+  imageFromWikiSummary,
+  type ScoredSubmission,
 } from './trivia'
 
 const identity = <T,>(items: T[]) => [...items]
@@ -63,6 +67,24 @@ describe('articleHtmlToText', () => {
   it('caps the length', () => {
     const p = `<p>${'word '.repeat(400)}</p>`
     expect(articleHtmlToText(p.repeat(10), 1000).length).toBeLessThanOrEqual(1000)
+  })
+})
+
+describe('wikiImageUrl', () => {
+  it('accepts Wikimedia https URLs and protocol-relative thumbs', () => {
+    expect(wikiImageUrl('https://upload.wikimedia.org/wikipedia/commons/a/a0/Octopus.jpg')).toMatch(/Octopus/)
+    expect(wikiImageUrl('//upload.wikimedia.org/wikipedia/en/t/th.jpg')).toMatch(/^https:\/\//)
+  })
+  it('rejects non-wiki hosts and nested junk', () => {
+    expect(wikiImageUrl('https://evil.example/x.jpg')).toBeUndefined()
+    expect(wikiImageUrl('javascript:alert(1)')).toBeUndefined()
+  })
+  it('reads summary thumbnail.source', () => {
+    expect(
+      imageFromWikiSummary({
+        pageData: { thumbnail: { source: 'https://upload.wikimedia.org/wikipedia/commons/t.jpg' } },
+      }),
+    ).toContain('wikimedia.org')
   })
 })
 
@@ -133,5 +155,41 @@ describe('rankPlayers', () => {
       ['c', 2],
       ['d', 4],
     ])
+  })
+})
+
+describe('tallyPlayer', () => {
+  const D = 20_000
+  it('scores the current round and rebuilds totals from earlier rounds', () => {
+    const subs = new Map([
+      [0, { choice: 1, correct: true, points: 800 }],
+      [1, { choice: 2, correct: true, points: 650 }],
+      [2, { choice: 3, elapsedMs: 0 }],
+    ])
+    const t = tallyPlayer(subs, 2, 3, D)
+    // Third correct in a row: 1000 speed + 2 * 50 streak.
+    expect(t.current).toEqual({ correct: true, points: 1100 })
+    expect(t).toMatchObject({ score: 2550, streak: 3, correctCount: 3, lastPoints: 1100 })
+  })
+
+  it('treats a skipped round as wrong and resets the streak', () => {
+    const subs = new Map([
+      [0, { choice: 0, correct: true, points: 900 }],
+      [2, { choice: 1, elapsedMs: D }],
+    ])
+    const t = tallyPlayer(subs, 2, 1, D)
+    expect(t).toMatchObject({ score: 1400, streak: 1, correctCount: 2, lastPoints: 500 })
+  })
+
+  it('is idempotent: re-running after the current round was written changes nothing', () => {
+    const subs = new Map<number, ScoredSubmission>([[0, { choice: 2, elapsedMs: 5_000 }]])
+    const first = tallyPlayer(subs, 0, 2, D)
+    // Simulate the first run having already written its result onto the submission.
+    subs.set(0, { ...subs.get(0)!, correct: first.current.correct, points: first.current.points })
+    expect(tallyPlayer(subs, 0, 2, D)).toEqual(first)
+  })
+
+  it('gives zero to a player with no answers', () => {
+    expect(tallyPlayer(new Map(), 1, 0, D)).toMatchObject({ score: 0, streak: 0, correctCount: 0, lastPoints: 0 })
   })
 })

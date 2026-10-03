@@ -69,7 +69,12 @@ export class AppCronRoom extends CronRoom<Env> {
 export class AppJobRoom extends JobRoom<Env> {
   constructor(state: DurableObjectState, env: Env) {
     super(state, env, {
-      authorizeWrite: async (user) => {
+      // Every job here spends owner credits (quiz gen + summaries), so no client
+      // may enqueue, cancel, or retry over the socket. Jobs enter only through
+      // server actions (createGame / nextQuestion), after validation + caps.
+      authorizeWrite: () => false,
+      // Signed-in members may watch progress (the lobby shows it live).
+      authorizeRead: async (user) => {
         if (user.userId.startsWith('anon-')) return false
         const role = await resolveAppRole(env, user.userId)
         return role === 'member' || role === 'admin'

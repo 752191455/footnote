@@ -1,9 +1,9 @@
 /* home pattern: split-hero — one-line pitch on the left, the live host/join panel on the right, your games below */
 
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AuthOverlay, useAuth, useQuery } from 'deepspace'
-import { ArrowRight, BookOpenText, History } from 'lucide-react'
+import { AuthOverlay, useAuth, useQuery, useR2Files } from 'deepspace'
+import { ArrowRight, BookOpenText, History, Paperclip, ImageIcon } from 'lucide-react'
 import {
   Badge,
   Button,
@@ -95,26 +95,57 @@ function Step({ n, children }: { n: number; children: React.ReactNode }) {
 
 // ── Host ──────────────────────────────────────────────────────────────────
 
-const STAGES = ['Searching Wikipedia…', 'Reading the articles…', 'Writing questions…', 'Checking answers…']
-
 function HostForm({ onNeedAuth }: { onNeedAuth: () => void }) {
   const { isSignedIn } = useAuth()
   const navigate = useNavigate()
   const { error } = useToast()
+  const { upload, isUploading } = useR2Files({ scope: 'app' })
   const [topic, setTopic] = useState('')
   const [count, setCount] = useState('8')
   const [seconds, setSeconds] = useState('20')
   const [busy, setBusy] = useState(false)
-  const [stage, setStage] = useState(0)
   const [fieldError, setFieldError] = useState<string | null>(null)
+  const [cover, setCover] = useState<{ key: string; url: string; name: string } | null>(null)
+  const [attachment, setAttachment] = useState<{
+    key: string
+    name: string
+    mime: string
+  } | null>(null)
 
-  // Generation takes several seconds; narrate what the server is doing.
-  useEffect(() => {
-    if (!busy) return
-    setStage(0)
-    const id = setInterval(() => setStage((s) => Math.min(STAGES.length - 1, s + 1)), 2800)
-    return () => clearInterval(id)
-  }, [busy])
+  async function onCoverChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (!isSignedIn) return onNeedAuth()
+    if (!file.type.startsWith('image/')) {
+      error('Cover must be an image', 'Try a JPG or PNG.')
+      return
+    }
+    const result = await upload(file, `covers/${Date.now()}-${file.name}`)
+    if (!result.success || !result.key) {
+      error('Could not upload cover', result.error ?? 'Try again after deploy (R2 needs APP_IDENTITY_TOKEN).')
+      return
+    }
+    setCover({ key: result.key, url: result.url ?? '', name: file.name })
+  }
+
+  async function onAttachmentChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (!isSignedIn) return onNeedAuth()
+    const okType = file.type.startsWith('image/') || file.type === 'application/pdf'
+    if (!okType) {
+      error('Attachment must be a PDF or image', file.type || 'Unknown type')
+      return
+    }
+    const result = await upload(file, `attachments/${Date.now()}-${file.name}`)
+    if (!result.success || !result.key) {
+      error('Could not upload file', result.error ?? 'Try again after deploy (R2 needs APP_IDENTITY_TOKEN).')
+      return
+    }
+    setAttachment({ key: result.key, name: file.name, mime: file.type })
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -128,6 +159,19 @@ function HostForm({ onNeedAuth }: { onNeedAuth: () => void }) {
         topic: t,
         questionCount: Number(count),
         secondsPerQuestion: Number(seconds),
+        ...(cover
+          ? {
+              coverFileKey: cover.key,
+              ...(cover.url ? { coverUrl: cover.url } : {}),
+            }
+          : {}),
+        ...(attachment
+          ? {
+              attachmentFileKey: attachment.key,
+              attachmentName: attachment.name,
+              attachmentMime: attachment.mime,
+            }
+          : {}),
       })
       navigate(`/play/${code}`)
     } catch (err) {
@@ -136,6 +180,8 @@ function HostForm({ onNeedAuth }: { onNeedAuth: () => void }) {
       setBusy(false)
     }
   }
+
+  const locked = busy || isUploading
 
   return (
     <form onSubmit={submit} className="space-y-4" data-testid="host-form">
@@ -148,7 +194,7 @@ function HostForm({ onNeedAuth }: { onNeedAuth: () => void }) {
           placeholder="e.g. The Apollo program"
           onChange={(e) => setTopic(e.target.value)}
           aria-invalid={!!fieldError || undefined}
-          disabled={busy}
+          disabled={locked}
           className="h-11 bg-background text-base"
         />
         {fieldError && <p className="text-xs text-destructive">{fieldError}</p>}
@@ -157,7 +203,7 @@ function HostForm({ onNeedAuth }: { onNeedAuth: () => void }) {
             <button
               key={idea}
               type="button"
-              disabled={busy}
+              disabled={locked}
               onClick={() => setTopic(idea)}
               className="rounded-sm border border-border px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:border-foreground hover:text-foreground"
             >
@@ -169,7 +215,7 @@ function HostForm({ onNeedAuth }: { onNeedAuth: () => void }) {
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
           <Label>Questions</Label>
-          <Select value={count} onValueChange={setCount} disabled={busy}>
+          <Select value={count} onValueChange={setCount} disabled={locked}>
             <SelectTrigger className="bg-background">
               <SelectValue />
             </SelectTrigger>
@@ -183,7 +229,7 @@ function HostForm({ onNeedAuth }: { onNeedAuth: () => void }) {
         </div>
         <div className="space-y-1.5">
           <Label>Time per question</Label>
-          <Select value={seconds} onValueChange={setSeconds} disabled={busy}>
+          <Select value={seconds} onValueChange={setSeconds} disabled={locked}>
             <SelectTrigger className="bg-background">
               <SelectValue />
             </SelectTrigger>
@@ -195,11 +241,55 @@ function HostForm({ onNeedAuth }: { onNeedAuth: () => void }) {
           </Select>
         </div>
       </div>
-      <Button type="submit" size="lg" className="w-full" loading={busy} data-testid="create-game">
-        {busy ? STAGES[stage] : isSignedIn ? 'Write my quiz' : 'Sign in to host'}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label htmlFor="cover-upload" className="flex items-center gap-1.5">
+            <ImageIcon className="h-3.5 w-3.5" aria-hidden />
+            Cover image <span className="font-normal text-muted-foreground">(optional)</span>
+          </Label>
+          <Input
+            id="cover-upload"
+            type="file"
+            accept="image/*"
+            disabled={locked}
+            onChange={onCoverChange}
+            className="h-10 cursor-pointer bg-background text-sm file:mr-3 file:border-0 file:bg-transparent file:text-sm file:font-medium"
+            data-testid="cover-upload"
+          />
+          {cover && (
+            <p className="truncate text-xs text-muted-foreground" data-testid="cover-name">
+              {cover.name}
+            </p>
+          )}
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="attachment-upload" className="flex items-center gap-1.5">
+            <Paperclip className="h-3.5 w-3.5" aria-hidden />
+            PDF / image <span className="font-normal text-muted-foreground">(optional)</span>
+          </Label>
+          <Input
+            id="attachment-upload"
+            type="file"
+            accept="image/*,application/pdf"
+            disabled={locked}
+            onChange={onAttachmentChange}
+            className="h-10 cursor-pointer bg-background text-sm file:mr-3 file:border-0 file:bg-transparent file:text-sm file:font-medium"
+            data-testid="attachment-upload"
+          />
+          {attachment && (
+            <p className="truncate text-xs text-muted-foreground" data-testid="attachment-name">
+              {attachment.name}
+            </p>
+          )}
+        </div>
+      </div>
+      <Button type="submit" size="lg" className="w-full" loading={busy || isUploading} data-testid="create-game">
+        {isUploading ? 'Uploading…' : busy ? 'Opening your room…' : isSignedIn ? 'Write my quiz' : 'Sign in to host'}
       </Button>
       <p className="text-xs text-muted-foreground">
-        Takes about 10 seconds. You play too: nobody, host included, sees an answer before the reveal.
+        Your room opens right away. Share the code while the questions are written (about 10 seconds).
+        You play too: nobody, host included, sees an answer before the reveal. Optional files go to R2 via
+        /api/files/*.
       </p>
     </form>
   )
@@ -244,6 +334,8 @@ function JoinForm({ onNeedAuth }: { onNeedAuth: () => void }) {
 // ── Recent games ──────────────────────────────────────────────────────────
 
 const STATUS_LABEL: Record<GameData['status'], string> = {
+  generating: 'Writing quiz',
+  failed: 'Setup failed',
   lobby: 'In lobby',
   question: 'Live',
   reveal: 'Live',
@@ -288,9 +380,19 @@ function RecentGames() {
                 onClick={() => navigate(`/play/${g.data.code}`)}
                 className="flex w-full items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-accent/50"
               >
+                {(() => {
+                  const cover = g.data.sources?.find((s) => s.imageUrl)?.imageUrl
+                  return cover ? (
+                    <img src={cover} alt="" className="h-10 w-10 shrink-0 rounded-sm object-cover" referrerPolicy="origin" />
+                  ) : (
+                    <span className="bg-muted font-code flex h-10 w-10 shrink-0 items-center justify-center rounded-sm text-[10px] font-bold tracking-widest">
+                      {g.data.code}
+                    </span>
+                  )
+                })()}
                 <span className="font-code w-14 text-sm font-bold tracking-widest">{g.data.code}</span>
                 <span className="min-w-0 flex-1 truncate font-medium">{g.data.topic}</span>
-                <Badge variant={g.data.status === 'finished' ? 'secondary' : 'default'}>
+                <Badge variant={g.data.status === 'finished' || g.data.status === 'failed' ? 'secondary' : 'default'}>
                   {STATUS_LABEL[g.data.status]}
                 </Badge>
                 <span className="font-code w-20 text-right text-sm tabular-nums text-muted-foreground">

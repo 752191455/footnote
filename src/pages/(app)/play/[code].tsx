@@ -1,15 +1,24 @@
 /**
- * The game room — /play/:code. One page, four phases (lobby → question →
- * reveal → finished), all driven by the synced `games` row. Clients never
- * write game state; they call server actions and render what syncs back.
+ * The game room — /play/:code. One page driven by the synced `games` row:
+ * generating → lobby → question → reveal → finished (or failed). Clients
+ * never write game state; they call server actions and render what syncs back.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { AuthOverlay, useAuth, usePresenceRoom, useQuery, type RecordData } from 'deepspace'
-import { BookOpenText, Check, Copy, Crown, ExternalLink, Play, Users } from 'lucide-react'
+import {
+  AuthOverlay,
+  useAuth,
+  useJobs,
+  usePresenceRoom,
+  useQuery,
+  useR2Files,
+  type RecordData,
+} from 'deepspace'
+import { AlertTriangle, BookOpenText, Check, Copy, Crown, ExternalLink, FileText, Play, Sparkles, Users } from 'lucide-react'
 import { Button, EmptyState, useToast } from '@/components/ui'
 import { cn } from '@/lib/utils'
+import { SCOPE_ID } from '../../../constants'
 import { ChoiceGrid } from '../../../components/game/ChoiceGrid'
 import { Scoreboard } from '../../../components/game/Scoreboard'
 import {
@@ -20,6 +29,7 @@ import {
   type PlayerData,
   type QuestionData,
   type SubmissionData,
+  type SummaryData,
 } from '../../../lib/game-client'
 import { normalizeRoomCode, rankPlayers } from '../../../lib/trivia'
 
@@ -112,7 +122,15 @@ function GameRoom({ game }: { game: RecordData<GameData> }) {
   // Opening an invite link takes your seat automatically.
   const joinAttempted = useRef(false)
   useEffect(() => {
-    if (players.status !== 'ready' || me || joinAttempted.current || g.status === 'finished') return
+    if (
+      players.status !== 'ready' ||
+      me ||
+      joinAttempted.current ||
+      g.status === 'finished' ||
+      g.status === 'failed'
+    ) {
+      return
+    }
     joinAttempted.current = true
     callAction('joinGame', { code: g.code }).catch((err) => error('Could not join', (err as Error).message))
   }, [players.status, me, g.status, g.code, error])
@@ -126,7 +144,7 @@ function GameRoom({ game }: { game: RecordData<GameData> }) {
         <div className="min-w-0">
           <p className="font-code text-xs uppercase tracking-[0.2em] text-muted-foreground">
             Game <span className="font-bold text-foreground">{g.code}</span>
-            {g.status !== 'lobby' && g.status !== 'finished' && (
+            {(g.status === 'question' || g.status === 'reveal') && (
               <>
                 {' '}· Question {g.currentIndex + 1} of {g.questionCount}
               </>
@@ -134,7 +152,7 @@ function GameRoom({ game }: { game: RecordData<GameData> }) {
           </p>
           <h1 className="font-display truncate text-2xl font-bold sm:text-3xl">{g.topic}</h1>
         </div>
-        {me && (
+        {me && g.status !== 'generating' && g.status !== 'failed' && (
           <p className="font-code text-sm tabular-nums">
             <span className="text-muted-foreground">Your score </span>
             <span className="font-bold" data-testid="my-score">{(me.data.score ?? 0).toLocaleString()}</span>
@@ -142,9 +160,10 @@ function GameRoom({ game }: { game: RecordData<GameData> }) {
         )}
       </header>
 
-      {g.status === 'lobby' && (
+      {(g.status === 'lobby' || g.status === 'generating') && (
         <Lobby gameId={gameId} game={g} players={players.records} online={online} isHost={isHost} />
       )}
+      {g.status === 'failed' && <SetupFailed game={g} />}
       {(g.status === 'question' || g.status === 'reveal') && !current && <RoomSkeleton />}
       {g.status === 'question' && current && (
         <QuestionPhase
@@ -171,7 +190,13 @@ function GameRoom({ game }: { game: RecordData<GameData> }) {
         />
       )}
       {g.status === 'finished' && (
-        <FinishedPhase game={g} players={players.records} online={online} meId={userId} />
+        <FinishedPhase
+          gameId={gameId}
+          game={g}
+          players={players.records}
+          online={online}
+          meId={userId}
+        />
       )}
     </div>
   )
@@ -220,21 +245,37 @@ function Lobby({
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-col items-center gap-4 rounded-lg border border-border bg-card px-6 py-8 text-center">
-        <p className="text-sm text-muted-foreground">Join at this page with code</p>
-        <p className="font-code text-6xl font-bold tracking-[0.25em] sm:text-7xl" data-testid="room-code">
-          {game.code}
-        </p>
-        <Button variant="outline" size="sm" onClick={copyLink}>
-          {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
-          Copy invite link
-        </Button>
+      <div className="flex flex-col items-center gap-4 overflow-hidden rounded-lg border border-border bg-card text-center">
+        {game.coverUrl || game.coverFileKey ? (
+          <CoverBanner coverUrl={game.coverUrl} coverFileKey={game.coverFileKey} />
+        ) : (
+          <SourceMosaic sources={game.sources} />
+        )}
+        <div className="px-6 pb-8 pt-4">
+          <p className="text-sm text-muted-foreground">Join at this page with code</p>
+          <p className="font-code text-6xl font-bold tracking-[0.25em] sm:text-7xl" data-testid="room-code">
+            {game.code}
+          </p>
+          <Button variant="outline" size="sm" className="mt-4" onClick={copyLink}>
+            {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
+            Copy invite link
+          </Button>
+        </div>
       </div>
+
+      {game.status === 'generating' && <GenerationProgress game={game} />}
+
+      <HostFiles game={game} />
 
       <section>
         <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
           <Users className="h-4 w-4" aria-hidden />
           {players.length} {players.length === 1 ? 'player' : 'players'} seated
+          {online.size > 0 && (
+            <span className="font-normal normal-case tracking-normal text-muted-foreground">
+              · {online.size} viewing
+            </span>
+          )}
         </h2>
         <ul className="flex flex-wrap gap-2" data-testid="lobby-players">
           {players.map((p) => (
@@ -250,17 +291,33 @@ function Lobby({
         </ul>
       </section>
 
-      <Sources game={game} heading={`${game.questionCount} questions drawn from`} />
+      {(game.status === 'lobby' || (game.status === 'generating' && !!game.sources?.length)) && (
+        <Sources
+          game={game}
+          heading={game.status === 'generating' ? 'Articles we found' : `${game.questionCount} questions drawn from`}
+        />
+      )}
+
+      {game.status === 'lobby' && !!game.enrichment?.length && <EnrichmentLinks enrichment={game.enrichment} />}
 
       <div className="sticky bottom-4 flex justify-center">
         {isHost ? (
-          <Button size="lg" className="min-w-56 shadow-lg" loading={starting} onClick={start} data-testid="start-game">
+          <Button
+            size="lg"
+            className="min-w-56 shadow-lg"
+            loading={starting}
+            disabled={game.status !== 'lobby'}
+            onClick={start}
+            data-testid="start-game"
+          >
             <Play aria-hidden />
-            Start the game
+            {game.status === 'lobby' ? 'Start the game' : 'Writing questions…'}
           </Button>
         ) : (
           <p className="rounded-full border border-border bg-card px-4 py-2 text-sm text-muted-foreground shadow-sm">
-            Waiting for {game.hostName ?? 'the host'} to start…
+            {game.status === 'generating'
+              ? 'Questions are being written — hang tight…'
+              : `Waiting for ${game.hostName ?? 'the host'} to start…`}
           </p>
         )}
       </div>
@@ -268,20 +325,186 @@ function Lobby({
   )
 }
 
+/**
+ * Live view of the AppJobRoom job writing this game's questions. Progress and
+ * messages are pushed over the JobRoom WebSocket — no polling — so the host
+ * and every early joiner watch the same bar.
+ */
+function GenerationProgress({ game }: { game: GameData }) {
+  const { getJob, connected } = useJobs(SCOPE_ID)
+  const job = game.jobId ? getJob(game.jobId) : undefined
+  const progress = job?.status === 'succeeded' ? 1 : job?.progress ?? 0
+  const message =
+    job?.progressMessage ??
+    (job?.status === 'queued' ? 'Waiting for the question writer…' : connected ? 'Starting…' : 'Connecting…')
+  const jobFailed = job?.status === 'failed' || job?.status === 'canceled'
+
+  return (
+    <section
+      className="rounded-lg border border-border bg-card px-5 py-4"
+      data-testid="generation-progress"
+      data-job-status={job?.status ?? 'unknown'}
+      aria-live="polite"
+    >
+      <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
+        <Sparkles className="h-4 w-4 text-primary" aria-hidden />
+        {jobFailed ? 'The question writer stopped' : `Writing ${game.questionCount} questions about ${game.topic}`}
+      </div>
+      <div
+        className="h-1.5 overflow-hidden rounded-full bg-muted"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(progress * 100)}
+      >
+        <div
+          className="h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
+          style={{ width: `${Math.max(4, progress * 100)}%` }}
+        />
+      </div>
+      <p className="mt-2 text-sm text-muted-foreground" data-testid="generation-message">
+        {jobFailed ? job?.error ?? 'Generation failed.' : message}
+      </p>
+    </section>
+  )
+}
+
+function SetupFailed({ game }: { game: GameData }) {
+  return (
+    <div className="rounded-lg border border-border bg-card px-6 py-10 text-center" data-testid="setup-failed">
+      <AlertTriangle className="mx-auto mb-3 h-8 w-8 text-primary" aria-hidden />
+      <h2 className="font-display text-xl font-bold">This quiz couldn&apos;t be written</h2>
+      <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+        {game.generationError || 'Something went wrong while writing the questions.'}
+      </p>
+      <Link
+        to="/home"
+        className="mt-6 inline-flex h-10 items-center rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+      >
+        Try another topic
+      </Link>
+    </div>
+  )
+}
+
+function CoverBanner({ coverUrl, coverFileKey }: { coverUrl?: string; coverFileKey?: string }) {
+  const { getUrl } = useR2Files({ scope: 'app' })
+  const src = coverUrl || (coverFileKey ? getUrl(coverFileKey) : '')
+  if (!src) return null
+  return (
+    <div className="h-36 w-full overflow-hidden bg-muted sm:h-44" data-testid="cover-banner">
+      <WikiPhoto src={src} alt="" className="h-full w-full object-cover" />
+    </div>
+  )
+}
+
+function HostFiles({ game }: { game: GameData }) {
+  const { getUrl } = useR2Files({ scope: 'app' })
+  if (!game.attachmentFileKey && !game.coverFileKey) return null
+  const href = game.attachmentFileKey ? getUrl(game.attachmentFileKey) : null
+  return (
+    <section className="rounded-lg border border-border bg-card px-4 py-3" data-testid="host-files">
+      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Host files</h2>
+      <ul className="space-y-1.5 text-sm">
+        {href && (
+          <li>
+            <a
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-2 text-primary underline-offset-4 hover:underline"
+            >
+              <FileText className="h-4 w-4 shrink-0" aria-hidden />
+              {game.attachmentName || 'Attachment'}
+              <ExternalLink className="h-3 w-3" aria-hidden />
+            </a>
+          </li>
+        )}
+        {game.coverFileKey && !game.attachmentFileKey && (
+          <li className="text-muted-foreground">Cover image attached to this room.</li>
+        )}
+      </ul>
+    </section>
+  )
+}
+
+function EnrichmentLinks({ enrichment }: { enrichment: { title: string; url: string }[] }) {
+  return (
+    <section data-testid="enrichment-links">
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+        Web colour (Exa)
+      </h2>
+      <ul className="flex flex-wrap gap-2">
+        {enrichment.map((e) => (
+          <li key={e.url}>
+            <a
+              href={e.url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex max-w-xs items-center gap-1 truncate rounded-sm border border-border bg-card px-2 py-1 text-xs text-muted-foreground hover:border-foreground hover:text-foreground"
+            >
+              {e.title}
+              <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+function SourceMosaic({ sources }: { sources?: GameData['sources'] }) {
+  const photos = (sources ?? []).map((s) => s.imageUrl).filter(Boolean) as string[]
+  if (photos.length === 0) return null
+  return (
+    <div className="grid h-36 w-full grid-cols-3 overflow-hidden bg-muted sm:h-44" data-testid="source-mosaic">
+      {photos.slice(0, 3).map((src, i) => (
+        <WikiPhoto key={src + i} src={src} alt="" className="h-full w-full object-cover" />
+      ))}
+    </div>
+  )
+}
+
+function WikiPhoto({ src, alt, className }: { src: string; alt: string; className?: string }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) return <div className={cn('bg-muted', className)} aria-hidden />
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={className}
+      loading="lazy"
+      referrerPolicy="origin"
+      onError={() => setFailed(true)}
+    />
+  )
+}
+
 function Sources({ game, heading }: { game: GameData; heading: string }) {
   if (!game.sources?.length) return null
   return (
     <section>
-      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">{heading}</h2>
-      <ol className="space-y-1 text-sm">
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">{heading}</h2>
+      <ol className="grid gap-3 sm:grid-cols-3">
         {game.sources.map((s, i) => (
-          <li key={s.url} className="flex gap-2">
-            <span className="font-code text-muted-foreground">[{i + 1}]</span>
-            <a href={s.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline decoration-border underline-offset-4 hover:decoration-foreground">
-              {s.title}
-              <ExternalLink className="h-3 w-3 text-muted-foreground" aria-hidden />
+          <li key={s.url}>
+            <a
+              href={s.url}
+              target="_blank"
+              rel="noreferrer"
+              className="group block overflow-hidden rounded-md border border-border bg-card text-left transition-colors hover:border-foreground"
+            >
+              {s.imageUrl ? (
+                <WikiPhoto src={s.imageUrl} alt="" className="h-28 w-full object-cover" />
+              ) : (
+                <div className="flex h-28 items-center justify-center bg-muted font-code text-muted-foreground">[{i + 1}]</div>
+              )}
+              <span className="flex items-start gap-1 px-2 py-2 text-sm font-medium">
+                <span className="font-code text-muted-foreground">[{i + 1}]</span>
+                <span className="min-w-0 flex-1 leading-snug group-hover:underline">{s.title}</span>
+                <ExternalLink className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+              </span>
             </a>
-            <span className="text-muted-foreground">· Wikipedia</span>
           </li>
         ))}
       </ol>
@@ -463,17 +686,26 @@ function RevealPhase({
       />
 
       {(question.explanation || question.sourceUrl) && (
-        <aside className="border-l-2 border-primary pl-4 text-sm" data-testid="footnote">
-          {question.explanation && <p className="text-foreground">{question.explanation}</p>}
-          {question.sourceUrl && (
-            <p className="mt-1 text-muted-foreground">
-              {sourceNumber > 0 && <sup className="font-code mr-1">[{sourceNumber}]</sup>}
-              <a href={question.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline underline-offset-4 hover:text-foreground">
-                {question.sourceTitle ?? 'Source'}, Wikipedia
-                <ExternalLink className="h-3 w-3" aria-hidden />
-              </a>
-            </p>
+        <aside className="overflow-hidden rounded-md border border-border bg-card" data-testid="footnote">
+          {question.sourceImageUrl && (
+            <WikiPhoto
+              src={question.sourceImageUrl}
+              alt={question.sourceTitle ? `From ${question.sourceTitle}` : 'Source'}
+              className="max-h-56 w-full object-cover"
+            />
           )}
+          <div className="border-l-2 border-primary px-4 py-3 text-sm">
+            {question.explanation && <p className="text-foreground">{question.explanation}</p>}
+            {question.sourceUrl && (
+              <p className="mt-1 text-muted-foreground">
+                {sourceNumber > 0 && <sup className="font-code mr-1">[{sourceNumber}]</sup>}
+                <a href={question.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline underline-offset-4 hover:text-foreground">
+                  {question.sourceTitle ?? 'Source'}, Wikipedia
+                  <ExternalLink className="h-3 w-3" aria-hidden />
+                </a>
+              </p>
+            )}
+          </div>
         </aside>
       )}
 
@@ -502,11 +734,13 @@ function RevealPhase({
 // ── Finished ──────────────────────────────────────────────────────────────
 
 function FinishedPhase({
+  gameId,
   game,
   players,
   online,
   meId,
 }: {
+  gameId: string
   game: GameData
   players: RecordData<PlayerData>[]
   online: Set<string>
@@ -516,6 +750,8 @@ function FinishedPhase({
   const podium = ranked.slice(0, 3)
   const heights = ['h-28', 'h-20', 'h-14']
   const order = [1, 0, 2] // silver, gold, bronze, left to right
+  const summaries = useQuery<SummaryData>('summaries', { where: { gameId }, limit: 1 })
+  const summary = summaries.records[0]?.data
 
   return (
     <div className="space-y-10" data-testid="finished-phase">
@@ -546,12 +782,16 @@ function FinishedPhase({
         </div>
       </section>
 
+      <GameSummary summary={summary} summaryJobId={game.summaryJobId} />
+
       <section>
         <h3 className="mb-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Full standings</h3>
         <Scoreboard players={players} meId={meId} online={online} />
       </section>
 
+      <HostFiles game={game} />
       <Sources game={game} heading="Footnotes" />
+      {!!game.enrichment?.length && <EnrichmentLinks enrichment={game.enrichment} />}
 
       <div className="flex justify-center">
         <Link
@@ -562,5 +802,62 @@ function FinishedPhase({
         </Link>
       </div>
     </div>
+  )
+}
+
+function GameSummary({
+  summary,
+  summaryJobId,
+}: {
+  summary?: SummaryData
+  summaryJobId?: string
+}) {
+  const { getJob } = useJobs(SCOPE_ID)
+  const job = summaryJobId ? getJob(summaryJobId) : undefined
+  const pending = !summary || summary.status === 'pending'
+  const failed = summary?.status === 'failed' || job?.status === 'failed'
+
+  return (
+    <section
+      className="rounded-lg border border-border bg-card px-5 py-4"
+      data-testid="game-summary"
+      data-status={summary?.status ?? 'pending'}
+      aria-live="polite"
+    >
+      <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
+        <Sparkles className="h-4 w-4 text-primary" aria-hidden />
+        {failed ? 'Recap unavailable' : pending ? 'Writing the recap…' : 'Night recap'}
+      </div>
+      {pending && !failed && (
+        <p className="text-sm text-muted-foreground">
+          {job?.progressMessage ?? 'Claude is drafting a short wrap-up from the standings.'}
+        </p>
+      )}
+      {failed && (
+        <p className="text-sm text-muted-foreground">
+          {summary?.body || job?.error || 'Could not write a recap.'}
+        </p>
+      )}
+      {summary?.status === 'ready' && (
+        <>
+          {summary.headline && (
+            <h3 className="font-display text-xl font-bold" data-testid="summary-headline">
+              {summary.headline}
+            </h3>
+          )}
+          {summary.body && <p className="mt-2 text-sm text-muted-foreground">{summary.body}</p>}
+          {!!summary.highlights?.length && (
+            <ul className="mt-3 space-y-1.5">
+              {summary.highlights.map((h) => (
+                <li key={h.label + h.text} className="text-sm">
+                  <span className="font-semibold">{h.label}</span>
+                  <span className="text-muted-foreground"> — {h.text}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </section>
   )
 }

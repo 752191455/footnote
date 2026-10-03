@@ -17,7 +17,26 @@ export interface GameData {
   revealedAt?: number
   secondsPerQuestion: number
   questionCount: number
-  sources?: { title: string; url: string }[]
+  sources?: { title: string; url: string; imageUrl?: string }[]
+  jobId?: string
+  generationError?: string
+  coverFileKey?: string
+  coverUrl?: string
+  attachmentFileKey?: string
+  attachmentName?: string
+  attachmentMime?: string
+  enrichment?: { title: string; url: string }[]
+  summaryJobId?: string
+}
+
+export interface SummaryData {
+  gameId: string
+  topic?: string
+  headline?: string
+  body?: string
+  highlights?: { label: string; text: string }[]
+  status?: 'pending' | 'ready' | 'failed'
+  jobId?: string
 }
 
 export interface QuestionData {
@@ -27,6 +46,7 @@ export interface QuestionData {
   choices: string[]
   sourceTitle?: string
   sourceUrl?: string
+  sourceImageUrl?: string
   correctIndex?: number | null
   explanation?: string | null
   distribution?: number[] | null

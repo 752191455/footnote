@@ -151,17 +151,21 @@ test('two players play a full game', async ({ users }) => {
   await host.page.getByRole('combobox').nth(1).click()
   await host.page.getByRole('option', { name: '10 seconds' }).click()
   await host.page.getByTestId('create-game').click()
-  await host.page.waitForURL(/\/play\/[A-Z]{4}$/, { timeout: 90_000 })
+  // The room opens before the questions exist; the JobRoom job writes them.
+  await host.page.waitForURL(/\/play\/[A-Z]{4}$/, { timeout: 20_000 })
   const code = (await host.page.getByTestId('room-code').textContent())?.trim()
   expect(code).toMatch(/^[A-Z]{4}$/)
 
-  // Guest follows the invite link and is seated automatically.
+  // Guest joins while generation is still running and sees the same live progress.
   await guest.page.goto(`/play/${code}`)
   for (const u of [host, guest]) {
     await expect(u.page.getByTestId('lobby-players').locator('li')).toHaveCount(2, { timeout: 20_000 })
   }
 
-  await host.page.getByTestId('start-game').click()
+  const start = host.page.getByTestId('start-game')
+  await expect(start).toBeEnabled({ timeout: 90_000 })
+  await expect(guest.page.getByTestId('generation-progress')).toHaveCount(0)
+  await start.click()
 
   const room = (u: typeof host) => u.page.getByTestId('game-room')
   let questionCount = 0

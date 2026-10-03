@@ -21,4 +21,6 @@ export const integrations: Record<string, { billing: 'developer' | 'user' }> = {
   // caps it per user (LIMITS.gamesPerDay) so a signed-in loop can't drain credits.
   anthropic: { billing: 'developer' },
   wikipedia: { billing: 'developer' },
+  // Topic enrichment beside Wikipedia; same daily game cap is the spend brake.
+  exa: { billing: 'developer' },
 }
